@@ -4,113 +4,85 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 
-# Ignora avisos de performance do pandas, que são comuns com 'melt'
+# Ignora avisos de performance do pandas
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 def carregar_dados_sinan(caminho_arquivo, nome_coluna_casos):
     """
+    (Esta função continua a mesma)
     Lê um arquivo do SINAN (Zika, Dengue, ou Chiku), limpa e transforma
     de formato 'wide' (largo) para 'long' (longo).
     """
     print(f"Processando arquivo: {caminho_arquivo}")
-    
-    # 1. Leitura: Pula as primeiras 3 linhas do cabeçalho e usa ';' como separador
     df = pd.read_csv(caminho_arquivo, sep=';', encoding='latin1', skiprows=3)
-    
-    # 2. Limpeza: Remove linhas vazias e a linha 'Total'
     df = df.dropna(how='all')
     df = df[df['Ano notificação'].str.contains('Total') == False]
-    
-    # 3. Transformação (Melt): Gira a tabela
     df_melted = df.melt(id_vars=['Ano notificação'], 
                         var_name='UF', 
                         value_name=nome_coluna_casos)
-    
-    # 4. Limpeza final
-    # Converte Ano para número
     df_melted['Ano'] = pd.to_numeric(df_melted['Ano notificação'], errors='coerce')
-    
-    # Remove valores não numéricos (como '-') dos casos
     df_melted[nome_coluna_casos] = df_melted[nome_coluna_casos].str.strip()
     df_melted = df_melted[df_melted[nome_coluna_casos] != '-']
     df_melted[nome_coluna_casos] = pd.to_numeric(df_melted[nome_coluna_casos], errors='coerce')
-    
-    # Remove linhas que falharam na conversão e seleciona colunas
     df_melted = df_melted.dropna(subset=['Ano', nome_coluna_casos])
     df_melted['Ano'] = df_melted['Ano'].astype(int)
-    
     return df_melted[['Ano', 'UF', nome_coluna_casos]]
 
-def carregar_dados_snis(caminho_arquivo):
+# --- ESTA É A NOVA FUNÇÃO ---
+def carregar_e_juntar_snis_csv(caminho_2020, caminho_2021):
     """
-    Lê o arquivo do SNIS, agrega por Estado e Ano,
-    e calcula as taxas de cobertura.
+    Lê os dois arquivos CSV (2020 e 2021), pulando os cabeçalhos,
+    adiciona o ano, renomeia colunas e junta os dois.
     """
-    print(f"Processando arquivo: {caminho_arquivo}")
-    
-    # 1. Leitura: Usa os parâmetros do seu código e 'on_bad_lines' para pular
-    #    as linhas corrompidas (com quebra de linha) no seu CSV
+    print(f"Processando arquivo SNIS 2020: {caminho_2020}")
+    # 1. Leitura do arquivo 2020
+    # Usamos skiprows=6 para pular as 6 linhas de título
+    # Usamos sep=',' baseado no cabeçalho do arquivo
+    df_2020 = pd.read_csv(caminho_2020, sep=',', encoding='latin1', skiprows=6)
+    df_2020['Ano'] = 2020 # Adiciona a coluna do ano
+
+    print(f"Processando arquivo SNIS 2021: {caminho_2021}")
+    # 2. Leitura do arquivo 2021 (assumindo que tem a mesma estrutura)
+    df_2021 = pd.read_csv(caminho_2021, sep=',', encoding='latin1', skiprows=6)
+    df_2021['Ano'] = 2021 # Adiciona a coluna do ano
+
+    # 3. Junção (Concatenação)
+    df_total_snis = pd.concat([df_2020, df_2021], ignore_index=True)
+
+    print("Colunas encontradas nos arquivos SNIS:", df_total_snis.columns.tolist())
+
+    # 4. Renomear Colunas: Ajuste os nomes aqui para bater com seu arquivo
+    # <-- MUDE AQUI
+    # O seu arquivo mostra o nome da coluna de região, mas não os indicadores.
+    # Você precisa olhar no seu CSV e ver o nome EXATO das colunas.
+    df_total_snis = df_total_snis.rename(columns={
+        'Região': 'UF',  # <-- CONFIRME SE A COLUNA DE ESTADO se chama 'Região' ou 'Estado' ou 'UF'
+        'IN055': 'Taxa_Cobertura_Agua', # Coluna do indicador IN055
+        'IN056': 'Taxa_Cobertura_Esgoto' # Coluna do indicador IN056
+    })
+
+    # 5. Limpeza (MUITO IMPORTANTE)
+    # Os números no seu arquivo estão como texto (ex: "89,951.16")
+    # Este código limpa isso:
+    for col in ['Taxa_Cobertura_Agua', 'Taxa_Cobertura_Esgoto']:
+        if df_total_snis[col].dtype == 'object':
+            print(f"Limpando coluna {col} (removendo '.' e trocando ',' por '.')")
+            df_total_snis[col] = (
+                df_total_snis[col]
+                .astype(str)
+                .str.replace('.', '', regex=False) # Remove o separador de milhar
+                .str.replace(',', '.', regex=False) # Troca a vírgula decimal por ponto
+            )
+            df_total_snis[col] = pd.to_numeric(df_total_snis[col], errors='coerce')
+
+    # 6. Seleção: Pega apenas as colunas que vamos usar
     try:
-        df = pd.read_csv(caminho_arquivo, 
-                         encoding='utf-16', 
-                         sep=',', 
-                         on_bad_lines='warn') # 'warn' avisa sobre linhas puladas
-    except Exception as e:
-        print(f"Erro ao ler SNIS.csv: {e}")
-        print("Verifique se o encoding 'utf-16' está correto. Tentando 'latin1'...")
-        df = pd.read_csv(caminho_arquivo, 
-                         encoding='latin1', 
-                         sep=',', 
-                         on_bad_lines='warn')
-
-    
-    # 2. Seleção de Colunas: Pega só o que precisamos
-    colunas_populacao = [
-        "G12A - População total residente do(s) município(s) com abastecimento de água, segundo o IBGE",
-        "G12B - População total residente do(s) município(s) com esgotamento sanitário, segundo o IBGE",
-        "AG001 - População total atendida com abastecimento de água",
-        "ES001 - População total atendida com esgotamento sanitário"
-    ]
-    colunas_chave = ['Estado', 'Ano de Referência']
-    
-    # Renomear colunas para facilitar
-    df = df.rename(columns={
-        "G12A - População total residente do(s) município(s) com abastecimento de água, segundo o IBGE": "Pop_Total_Agua",
-        "G12B - População total residente do(s) município(s) com esgotamento sanitário, segundo o IBGE": "Pop_Total_Esgoto",
-        "AG001 - População total atendida com abastecimento de água": "Pop_Atendida_Agua",
-        "ES001 - População total atendida com esgotamento sanitário": "Pop_Atendida_Esgoto"
-    })
-    
-    colunas_renomeadas = ['Pop_Total_Agua', 'Pop_Total_Esgoto', 'Pop_Atendida_Agua', 'Pop_Atendida_Esgoto']
-
-    # 3. Limpeza: Converte colunas de população para número
-    for col in colunas_renomeadas:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    df = df.dropna(subset=colunas_renomeadas + colunas_chave) # Remove linhas sem dados
-    
-    # 4. Transformação (Agregação): Agrupa por Estado e Ano e soma tudo
-    print("Agregando dados do SNIS por Estado e Ano...")
-    df_agg = df.groupby(colunas_chave)[colunas_renomeadas].sum().reset_index()
-
-    # 5. Criação de Indicadores: Calcula as taxas percentuais
-    #    (Evita divisão por zero se a população for 0)
-    df_agg['Taxa_Cobertura_Agua'] = df_agg.apply(
-        lambda row: (row['Pop_Atendida_Agua'] / row['Pop_Total_Agua']) * 100 if row['Pop_Total_Agua'] > 0 else 0,
-        axis=1
-    )
-    df_agg['Taxa_Cobertura_Esgoto'] = df_agg.apply(
-        lambda row: (row['Pop_Atendida_Esgoto'] / row['Pop_Total_Esgoto']) * 100 if row['Pop_Total_Esgoto'] > 0 else 0,
-        axis=1
-    )
-    
-    # 6. Preparação para Unir: Renomeia colunas para bater com os dados do SINAN
-    df_final_snis = df_agg.rename(columns={
-        'Estado': 'UF',
-        'Ano de Referência': 'Ano'
-    })
-    
-    return df_final_snis[['Ano', 'UF', 'Taxa_Cobertura_Agua', 'Taxa_Cobertura_Esgoto']]
+        df_final_snis = df_total_snis[['Ano', 'UF', 'Taxa_Cobertura_Agua', 'Taxa_Cobertura_Esgoto']]
+        return df_final_snis
+    except KeyError as e:
+        print(f"ERRO: A coluna {e} não foi encontrada após renomear.")
+        print("Verifique os nomes das colunas no passo '# <-- MUDE AQUI'.")
+        return pd.DataFrame()
 
 # --- PASSO 1: EXTRAIR E TRANSFORMAR ---
 
@@ -119,58 +91,58 @@ df_zika = carregar_dados_sinan('dados/ZIKA - SINAN.csv', 'Casos_Zika')
 df_dengue = carregar_dados_sinan('dados/DENGUE - SINAN.csv', 'Casos_Dengue')
 df_chiku = carregar_dados_sinan('dados/CHIKU - SINAN.csv', 'Casos_Chiku')
 
-# Carrega e transforma o arquivo de saneamento
-df_snis = carregar_dados_snis('dados/SNIS V2.csv')
+# <-- MUDE AQUI: Coloque os nomes dos seus DOIS arquivos CSV do SNIS
+caminho_snis_2020 = 'dados/SNIS - 2020.csv' # Você já enviou este
+caminho_snis_2021 = 'dados/SNIS - 2021.csv' # <--- Coloque o nome do seu arquivo de 2021 aqui
+df_snis = carregar_e_juntar_snis_csv(caminho_snis_2020, caminho_snis_2021)
 
-print("\n--- Visualização Pré-Merge ---")
-print("Dados de Doenças (Zika):")
-display(df_zika.head())
-print("\nDados de Saneamento (Agregados por Estado):")
-display(df_snis.head())
+# --- PASSO 2: FILTRAR POR ANO ---
+anos_desejados = [2020, 2021]
+print(f"\nFiltrando dados das doenças para manter apenas os anos: {anos_desejados}\n")
 
-# --- PASSO 2: UNIR OS DADOS (LOAD) ---
+df_zika = df_zika[df_zika['Ano'].isin(anos_desejados)]
+df_dengue = df_dengue[df_dengue['Ano'].isin(anos_desejados)]
+df_chiku = df_chiku[df_chiku['Ano'].isin(anos_desejados)]
 
-print("\n--- Unindo tabelas ---")
+# --- PASSO 3: UNIR OS DADOS (LOAD) ---
+
+print("--- Unindo tabelas ---")
 
 # Une os 3 dataframes de doenças
 df_doencas = pd.merge(df_zika, df_dengue, on=['Ano', 'UF'], how='outer')
 df_doencas = pd.merge(df_doencas, df_chiku, on=['Ano', 'UF'], how='outer')
 
 # Une os dados de doenças com os de saneamento
-# 'inner' garante que só teremos linhas onde há dados de AMBOS os lados
 df_final = pd.merge(df_doencas, df_snis, on=['Ano', 'UF'], how='inner')
-
-# Preenche com 0 casos onde a união 'outer' pode ter criado NaNs
 df_final = df_final.fillna(0)
 
-print("\n--- TABELA FINAL UNIFICADA ---")
+print("\n--- TABELA FINAL UNIFICADA (2020-2021) ---")
 display(df_final)
 
-# --- PASSO 3: ANÁLISE DE CORRELAÇÃO ---
+# --- PASSO 4: ANÁLISE DE CORRELAÇÃO ---
+# (O restante do código continua o mesmo)
+if not df_final.empty:
+    print("\n--- Matriz de Correlação (2020-2021) ---")
+    colunas_numericas = ['Casos_Zika', 'Casos_Dengue', 'Casos_Chiku', 'Taxa_Cobertura_Agua', 'Taxa_Cobertura_Esgoto']
+    matriz_correlacao = df_final[colunas_numericas].corr()
+    display(matriz_correlacao)
 
-print("\n--- Matriz de Correlação ---")
-# Calcula a correlação entre todas as variáveis numéricas
-# .corr() só funciona com números, por isso filtramos
-colunas_numericas = ['Casos_Zika', 'Casos_Dengue', 'Casos_Chiku', 'Taxa_Cobertura_Agua', 'Taxa_Cobertura_Esgoto']
-matriz_correlacao = df_final[colunas_numericas].corr()
+    print("\n--- Visualização da Correlação ---")
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(matriz_correlacao, annot=True, cmap='coolwarm', fmt='.2f')
+    plt.title('Matriz de Correlação: Saneamento vs. Doenças (Dados de 2020-2021)')
+    plt.savefig('matriz_correlacao.png')
+    plt.show()
 
-display(matriz_correlacao)
-
-print("\n--- Visualização da Correlação ---")
-
-# Plota um "mapa de calor" (heatmap) da correlação
-plt.figure(figsize=(10, 7))
-sns.heatmap(matriz_correlacao, annot=True, cmap='coolwarm', fmt='.2f')
-plt.title('Matriz de Correlação: Saneamento vs. Incidência de Doenças')
-plt.show()
-
-# Plota a correlação específica que você quer ver
-# (usando regplot para ver a linha de tendência)
-print("\n--- Gráfico: Correlação Esgoto vs. Zika ---")
-plt.figure(figsize=(10, 6))
-sns.regplot(data=df_final, x='Taxa_Cobertura_Esgoto', y='Casos_Zika')
-plt.title('Correlação entre Cobertura de Esgoto e Casos de Zika (2020-2022)')
-plt.xlabel('Taxa de Cobertura de Esgoto (%) por Estado')
-plt.ylabel('Nº de Casos de Zika')
-plt.grid(True)
-plt.show()
+    print("\n--- Gráfico: Correlação Esgoto vs. Zika (2020-2021) ---")
+    plt.figure(figsize=(10, 6))
+    sns.regplot(data=df_final, x='Taxa_Cobertura_Esgoto', y='Casos_Zika')
+    plt.title('Correlação entre Cobertura de Esgoto e Casos de Zika (2020-2021)')
+    plt.xlabel('Taxa de Cobertura de Esgoto (%) por Estado')
+    plt.ylabel('Nº de Casos de Zika')
+    plt.grid(True)
+    plt.savefig('correlacao_esgoto_zika.png')
+    plt.show()
+else:
+    print("\nA união dos dados falhou. Verifique os nomes das colunas e os dados nos arquivos de entrada.")
+    print("Certifique-se que a coluna 'UF' (ex: 'SP', 'RJ') está idêntica nos arquivos SINAN e SNIS.")
