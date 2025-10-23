@@ -1,11 +1,10 @@
 import pandas as pd
 
+
 snis_2020 = 'dados/SNIS - 2020.csv'
 snis_2021 = 'dados/SNIS - 2021.csv'
-dengue_2020 = 'dados/Dengue (2020 - 2021)/DENGUE - 2020.csv'
-dengue_2021 = 'dados/Dengue (2020 - 2021)/DENGUE - 2021.csv'
-chiku_2020 = 'dados/Chiku (2020 - 2021)/CHIKU - 2020.csv'
-chiku_2021 = 'dados/Chiku (2020 - 2021)/CHIKU - 2021.csv'
+dengue_202x = 'dados/Dengue (2020 - 2021)/DENGUE - (2020-2021).csv'
+chiku_202x = 'dados/Chiku (2020 - 2021)/CHIKU - (2020-2021).csv'
 
 def total_casos(filepath, ano, doenca):
     try:
