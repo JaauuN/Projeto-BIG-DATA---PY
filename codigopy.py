@@ -1,12 +1,13 @@
 import pandas as pd
 import os
 
+
+# https://habitatbrasil.org.br/proliferacao-do-mosquito-da-dengue/
 agua_esgoto = 'dados/Esgoto e Água - (2020 - 2021).csv'
 agua_pluv = 'dados/Pluvial - (2020 - 2021).csv'
 residuos_solid = 'dados/Residuos - (2020 - 2021).csv'
 dengue_202x = 'dados/Dengue/DENGUE - 2020-2021.csv'
 chiku_202x = 'dados/Chiku/CHIKU - 2020-2021.csv'
-populacao_total = 'dados/População - 2022.csv'
 
 def total_casos(filepath, doenca):
     df = pd.read_csv(filepath, sep=',', encoding='utf-8', na_values='-')
@@ -52,52 +53,31 @@ def dados_pluvial(filepath):
     print(f"Lido SNIS AP: {os.path.basename(filepath)}")
     return df[['Codigo do municipio', 'Ano', 'Drenagem']]
 
-def dados_populacao(filepath):
-    colunas_pop = ['Municipio', 'Populacao']
-    df = pd.read_csv(filepath,
-                     sep=',',
-                     encoding='latin1',
-                     usecols=colunas_pop,
-                     thousands='.',
-                     skipinitialspace=True
-                    )
-    df.columns = df.columns.str.strip()
-    if df['Populacao'].dtype == 'object':
-        df['Populacao'] = df['Populacao'].astype(str).str.replace(r'\s+', '', regex=True)
-        df['Populacao'] = pd.to_numeric(df['Populacao'], errors='coerce')
-    df.dropna(subset=['Populacao'], inplace=True)
-    df['Populacao'] = df['Populacao'].astype(int)
-    df = df.drop_duplicates(subset=['Municipio'], keep='first')
-    print(f"Lido População: {os.path.basename(filepath)}")
-    return df[['Municipio', 'Populacao']]
-
 total_dengue = total_casos(dengue_202x, 'Dengue')
 total_chiku = total_casos(chiku_202x, 'Chiku')
 agua_esgoto = dados_agua_esgoto(agua_esgoto)
 residuos = dados_residuos(residuos_solid)
 pluvial = dados_pluvial(agua_pluv)
-populacao = dados_populacao(populacao_total)
 
 casos_dengue = pd.pivot_table(total_dengue,
-                              values='Total',
-                              index=['Codigo do municipio', 'Ano'],
-                              columns='Tipo_Doenca',
-                              aggfunc='sum',
-                              fill_value=0).reset_index()
+                                 values='Total',
+                                 index=['Codigo do municipio', 'Ano'],
+                                 columns='Tipo_Doenca',
+                                 aggfunc='sum',
+                                 fill_value=0).reset_index()
 
 casos_chiku = pd.pivot_table(total_chiku,
-                             values='Total',
-                             index=['Codigo do municipio', 'Ano'],
-                             columns='Tipo_Doenca',
-                             aggfunc='sum',
-                             fill_value=0).reset_index()
+                                 values='Total',
+                                 index=['Codigo do municipio', 'Ano'],
+                                 columns='Tipo_Doenca',
+                                 aggfunc='sum',
+                                 fill_value=0).reset_index()
 
 df_final = agua_esgoto.copy()
 df_final = pd.merge(df_final, residuos, on=['Codigo do municipio', 'Ano'], how='left')
 df_final = pd.merge(df_final, pluvial, on=['Codigo do municipio', 'Ano'], how='left')
-df_final = pd.merge(df_final, populacao, on='Municipio', how='left')
-df_final = pd.merge(df_final, casos_dengue, on=['Codigo do municipio', 'Ano'], how='inner')
-df_final = pd.merge(df_final, casos_chiku, on=['Codigo do municipio', 'Ano'], how='inner')
+df_final = pd.merge(df_final, casos_dengue, on=['Codigo do municipio', 'Ano'], how='left')
+df_final = pd.merge(df_final, casos_chiku, on=['Codigo do municipio', 'Ano'], how='left')
 
 indicadores_todos = ['Agua', 'Esgoto', 'Coleta_Lixo', 'Drenagem']
 
@@ -111,21 +91,6 @@ for col in indicadores_todos:
 df_final['Dengue'] = df_final['Dengue'].fillna(0).astype(int)
 df_final['Chiku'] = df_final['Chiku'].fillna(0).astype(int)
 df_final['Total'] = df_final['Dengue'] + df_final['Chiku']
-
-original_rows_before_validation = len(df_final)
-
-df_final.dropna(subset=['Esgoto'], inplace=True)
-df_final.dropna(subset=['Populacao'], inplace=True)
-df_final = df_final[df_final['Populacao'] > 0]
-
-rows_before_indicator_filter = len(df_final)
-df_final = df_final[
-    (df_final['Agua'] > 0) &
-    (df_final['Esgoto'] > 0) &
-    (df_final['Coleta_Lixo'] > 0) &
-    (df_final['Drenagem'] > 0)
-].copy()
-rows_after_indicator_filter = len(df_final)
 
 df_final['Deficit_Agua'] = 100 - df_final['Agua']
 df_final['Deficit_Esgoto'] = 100 - df_final['Esgoto']
@@ -144,29 +109,41 @@ df_final['Pontuacao_Deficit_Saneamento'] = df_final['Pontuacao_Deficit_Saneament
 indicadores_arredondar = ['Agua', 'Esgoto', 'Coleta_Lixo', 'Drenagem']
 for col in indicadores_arredondar:
      if col in df_final.columns:
-        df_final[col] = df_final[col].round(2)
+         df_final[col] = df_final[col].round(2)
 
 pd.options.display.float_format = '{:.2f}'.format
 
-print("RANKING DOS MUNICÍPIOS COM PIOR SANEAMENTO BÁSICO (MÉDIA DOS 4 INDICADORES)")
+print("\nRANKING DOS MUNICÍPIOS COM PIOR SANEAMENTO BÁSICO (MÉDIA DOS 4 INDICADORES)")
 print("Quanto maior a pontuação, pior o saneamento médio.")
 
 ranking_deficit = df_final.sort_values(by=['Ano', 'Pontuacao_Deficit_Saneamento'], ascending=[False, False])
+ranking_filtrado = ranking_deficit[
+    (ranking_deficit['Dengue'] > 0) &
+    (ranking_deficit['Chiku'] > 0) &
+    (ranking_deficit['Pontuacao_Deficit_Saneamento'] < 100.00)
+]
 
 colunas_para_mostrar = ['Ano', 'Municipio', 'UF', 'Pontuacao_Deficit_Saneamento', 'Dengue', 'Chiku', 'Total']
 
-print("\nTop 20 Piores - 2021")
-df_print_2021 = ranking_deficit[ranking_deficit['Ano'] == 2021][colunas_para_mostrar].head(20)
-if not df_print_2021.empty:
-    print(df_print_2021.to_string(index=False))
-else:
-    print("Não há dados para 2021 neste ranking após a filtragem.")
-
 print("\nTop 20 Piores - 2020")
-df_print_2020 = ranking_deficit[ranking_deficit['Ano'] == 2020][colunas_para_mostrar].head(20)
-if not df_print_2020.empty:
-    print(df_print_2020.to_string(index=False))
-else:
-    print("Não há dados para 2020 neste ranking após a filtragem.")
+df_print_2020 = ranking_filtrado[ranking_filtrado['Ano'] == 2020][colunas_para_mostrar].head(20)
+print(df_print_2020.to_string(index=False))
 
-print("\n--- Processamento Concluído ---")
+print("\nTop 20 Piores - 2021")
+df_print_2021 = ranking_filtrado[ranking_filtrado['Ano'] == 2021][colunas_para_mostrar].head(20)
+print(df_print_2021.to_string(index=False))
+
+
+ranking_casos = df_final.sort_values(by=['Ano', 'Total'], ascending=[False, False])
+
+print("\nTop 10 Mais Casos - 2020")
+df_casos_2020 = ranking_casos[ranking_casos['Ano'] == 2020][colunas_para_mostrar].head(10)
+print(df_casos_2020.to_string(index=False))
+
+print("\nTop 10 Mais Casos - 2021")
+df_casos_2021 = ranking_casos[ranking_casos['Ano'] == 2021][colunas_para_mostrar].head(10)
+print(df_casos_2021.to_string(index=False))
+
+
+
+
