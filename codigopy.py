@@ -1,29 +1,37 @@
 import pandas as pd
 import os # Importado para checagem de arquivos
 
-# --- 1. DEFINIÇÃO DOS CAMINHOS (Exatamente como no seu script) ---
+# --- 1. DEFINIÇÃO DOS CAMINHOS (Mantido como no seu script) ---
+# (Nota: O script executado usou os caminhos completos do ambiente, 
+# mas seu script original com caminhos relativos 'dados/...' deve funcionar
+# se executado do diretório raiz do projeto)
+
 snis_202x = 'dados/SNIS - (2020 - 2021).csv'
 dengue_202x = 'dados/Dengue/DENGUE - (2020-2021).csv'
 chiku_202x = 'dados/Chiku/CHIKU - (2020-2021).csv'
 
-# --- 2. FUNÇÃO PARA LER CASOS (Corrigida) ---
-# O parâmetro 'ano' foi removido, pois o arquivo .csv já deve conter a coluna 'Ano'
+# --- 2. FUNÇÃO PARA LER CASOS (Exatamente como você forneceu) ---
 def total_casos(filepath, doenca):     
     try:
         df = pd.read_csv(filepath, sep=',', encoding='latin1', na_values='-')
         
+        # Limpar nomes das colunas
+        df.columns = df.columns.str.strip().str.replace(',', '', regex=False)
+
         colunas_casos = [
             'Codigo do municipio', 
             'Total', 
             'Ano'
         ]
+        
         if not all(col in df.columns for col in colunas_casos):
-            print(f"ERRO: O arquivo {filepath} não contém as colunas necessárias: {colunas_casos}")
+            print(f"ERRO: O arquivo {filepath} não contém as colunas necessárias.")
+            print(f"Colunas esperadas: {colunas_casos}")
             print(f"Colunas encontradas: {list(df.columns)}")
             return pd.DataFrame()
 
         df = df[colunas_casos]
-        # Lógica de limpeza mantida do seu script
+        
         df['Total'] = df['Total'].astype(str).str.replace('.', '', regex=False)
         df['Total'] = pd.to_numeric(df['Total'], errors='coerce').fillna(0)
         
@@ -38,7 +46,7 @@ def total_casos(filepath, doenca):
         return pd.DataFrame()
 
 
-# --- 3. FUNÇÃO PARA LER DADOS DO SNIS (Mantida 100% como no seu script) ---
+# --- 3. FUNÇÃO PARA LER DADOS DO SNIS (Exatamente como você forneceu) ---
 def dados_snis(filepath):
     try:
         colunas_snis = [
@@ -50,6 +58,9 @@ def dados_snis(filepath):
             'IN056',
         ]
         df = pd.read_csv(filepath, sep=',', encoding='utf-8', usecols=colunas_snis, decimal='.')
+        
+        df.columns = df.columns.str.strip()
+        
         df = df.rename(columns={
             'IN055': 'Indice_Agua',
             'IN056': 'Indice_Esgoto'
@@ -66,51 +77,65 @@ def dados_snis(filepath):
         print(f"ERRO ao ler {filepath}: {e}. Verifique o separador (sep=',') e decimal ('.').")
         return pd.DataFrame()
 
-# --- 4. EXECUÇÃO PRINCIPAL (Corrigida) ---
+# --- 4. EXECUÇÃO PRINCIPAL (Como você forneceu) ---
     
 print("--- Calculando Totais de Casos (SINAN) ---")
-# Bloco corrigido para chamar as variáveis corretas (dengue_202x, chiku_202x)
-# e usar a função 'total_casos' corrigida (sem o parâmetro de ano)
 total_dengue = total_casos(dengue_202x, 'Dengue')
 total_chiku = total_casos(chiku_202x, 'Chikungunya')
 print("-" * 45)
 
-# Bloco corrigido para concatenar os 2 dataframes criados
 todas_doencas = pd.concat([total_dengue, total_chiku])
 
 print("\n--- Processando Dados de Saneamento (SNIS) ---")
-# Esta parte do seu script já estava correta
 snis = dados_snis(snis_202x)
 
-# --- 5. RESTANTE DO SCRIPT (Mantido 100% como no seu script) ---
+# --- 5. PROCESSAMENTO E UNIÃO (Modificado para incluir colunas separadas) ---
 if not snis.empty and not todas_doencas.empty:
     print("\n--- Processando e Unindo Dados ---")
     
-    # 1. Agrega os casos (Soma Dengue + Chiku) por município e ano
-    df_casos_agregados = todas_doencas.groupby(['Codigo do municipio', 'Ano'])['Total'].sum().reset_index()
+    # 1. *** MODIFICAÇÃO INICIA AQUI ***
+    # Pivota os dados para ter colunas separadas para 'Dengue' e 'Chikungunya'
+    df_casos_pivot = pd.pivot_table(todas_doencas,
+                                     values='Total',
+                                     index=['Codigo do municipio', 'Ano'],
+                                     columns='Tipo_Doenca',
+                                     aggfunc='sum',
+                                     fill_value=0).reset_index()
     
-    # 2. Junta (merge) os dados do SNIS com os casos agregados
-    df_mestre = pd.merge(snis, df_casos_agregados, on=['Codigo do municipio', 'Ano'], how='left')
+    # Renomeia colunas para o resultado final
+    df_casos_pivot.rename(columns={'Dengue': 'Casos_Dengue', 'Chikungunya': 'Casos_Chikungunya'}, inplace=True)
     
-    # 3. Limpa o resultado
+    # 2. Cria a coluna Total (soma das duas doenças)
+    df_casos_pivot['Total'] = df_casos_pivot['Casos_Dengue'] + df_casos_pivot['Casos_Chikungunya']
+    # *** MODIFICAÇÃO TERMINA AQUI ***
+    
+    # 3. Junta (merge) os dados do SNIS com os casos (agora separados e com total)
+    df_mestre = pd.merge(snis, df_casos_pivot, on=['Codigo do municipio', 'Ano'], how='left')
+    
+    # 4. Limpa o resultado (preenche NaNs para municípios do SNIS sem casos)
+    # (Adicionado preenchimento para as novas colunas)
+    df_mestre['Casos_Dengue'] = df_mestre['Casos_Dengue'].fillna(0).astype(int)
+    df_mestre['Casos_Chikungunya'] = df_mestre['Casos_Chikungunya'].fillna(0).astype(int)
     df_mestre['Total'] = df_mestre['Total'].fillna(0).astype(int)
+    
     # Remove municípios onde o dado de esgoto não foi informado (NaN)
     df_mestre.dropna(subset=['Indice_Esgoto'], inplace=True)
     
-    # 4. Cria o Ranking (Ordena por Ano, depois por Pior Esgoto)
+    # 5. Cria o Ranking (Ordena por Ano, depois por Pior Esgoto)
     df_ranking = df_mestre.sort_values(by=['Ano', 'Indice_Esgoto'], ascending=[False, True])
     
-    # --- RANKING ATUALIZADO ---
+    # --- RANKING ATUALIZADO (Modificado para mostrar as novas colunas) ---
     print("\n--- Ranking dos 20 Piores Municípios em Saneamento (Esgoto) - 2021 ---")
     ranking_2021 = df_ranking[df_ranking['Ano'] == 2021].head(20)
-    # Adiciona a coluna 'Casos_Totais' ao print
-    print(ranking_2021[['Ano', 'Municipio', 'UF', 'Indice_Esgoto', 'Total']].to_string(index=False))
+    # Adiciona as colunas 'Casos_Dengue' e 'Casos_Chikungunya' ao print
+    colunas_ranking = ['Ano', 'Municipio', 'UF', 'Indice_Esgoto', 'Casos_Dengue', 'Casos_Chikungunya', 'Total']
+    print(ranking_2021[colunas_ranking].to_string(index=False))
 
     print("\n--- Ranking dos 20 Piores Municípios em Saneamento (Esgoto) - 2020 ---")
     ranking_2020 = df_ranking[df_ranking['Ano'] == 2020].head(20)
-    # Adiciona a coluna 'Casos_Totais' ao print
-    print(ranking_2020[['Ano', 'Municipio', 'UF', 'Indice_Esgoto', 'Total']].to_string(index=False))
+    # Adiciona as colunas 'Casos_Dengue' e 'Casos_Chikungunya' ao print
+    print(ranking_2020[colunas_ranking].to_string(index=False))
 else:
     print("Não foi possível gerar o ranking final pois os arquivos SNIS ou de Doenças não foram carregados.")
 
-print("\n--- Análise Inicial Concluída ---")
+print("\n--- Análise (com colunas separadas) Concluída ---")
